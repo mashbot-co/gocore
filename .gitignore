@@ -1,0 +1,23 @@
+# Compiled tool binaries — `go build` writes to the current working directory
+# by default, so the same binary can land at the module root, inside the tool
+# directory, or anywhere else `go build` is invoked from. Match by name so we
+# catch every case.
+gqlgen
+migrate
+
+# Test coverage outputs
+cov.out
+cov.html
+coverage.out
+coverage.html
+
+# Module / build outputs that should never be committed.
+/vendor/
+
+# Editor / OS noise
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
