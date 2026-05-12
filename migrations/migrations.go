@@ -40,6 +40,13 @@ func RegisterModel(id string, model interface{}) {
 	})
 }
 
+// Reset clears the migration registry. Intended for use in tests only —
+// callers should save migrations.All() and re-Register what they want
+// preserved after a Reset.
+func Reset() {
+	registry = nil
+}
+
 // All returns all registered migrations sorted by ID (timestamp order).
 func All() []*gormigrate.Migration {
 	sorted := make([]*gormigrate.Migration, len(registry))

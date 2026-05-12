@@ -20,6 +20,102 @@ func resetRegistry() func() {
 	}
 }
 
+// TestReset covers the exported Reset helper (added for test harnesses
+// that need a clean global registry across runs).
+func TestReset_ClearsRegistry(t *testing.T) {
+	defer resetRegistry()()
+
+	noop := func(tx *gorm.DB) error { return nil }
+	Register(&gormigrate.Migration{ID: "20260101000001", Migrate: noop, Rollback: noop})
+	if len(registry) != 1 {
+		t.Fatalf("expected 1 registered migration before Reset, got %d", len(registry))
+	}
+
+	Reset()
+	if len(registry) != 0 {
+		t.Fatalf("expected empty registry after Reset, got %d entries", len(registry))
+	}
+}
+
+// Up/Down/RollbackTo each have an error-wrap branch that fires when the
+// underlying gormigrate call fails. The cleanest way to trigger that is a
+// migration that returns an error from its Migrate/Rollback function.
+func TestUp_WrapsMigrationError(t *testing.T) {
+	defer resetRegistry()()
+	db := openSQLite(t)
+
+	fail := func(tx *gorm.DB) error { return errBoom() }
+	Register(&gormigrate.Migration{ID: "20260101000001", Migrate: fail, Rollback: fail})
+
+	err := Up(db)
+	if err == nil {
+		t.Fatal("expected wrapped error from failing migration")
+	}
+	if got := err.Error(); !contains(got, "migrate up") {
+		t.Errorf("expected 'migrate up' prefix in error, got %q", got)
+	}
+}
+
+func TestDown_WrapsRollbackError(t *testing.T) {
+	defer resetRegistry()()
+	db := openSQLite(t)
+
+	// First register a no-op so there's something to apply.
+	noop := func(tx *gorm.DB) error { return nil }
+	Register(&gormigrate.Migration{ID: "20260101000001", Migrate: noop, Rollback: noop})
+	if err := Up(db); err != nil {
+		t.Fatalf("up: %v", err)
+	}
+
+	// Swap in a failing rollback by re-registering with the same ID and
+	// directly inserting into schema_migrations (skipping past validation).
+	registry = nil
+	Register(&gormigrate.Migration{
+		ID:       "20260101000001",
+		Migrate:  noop,
+		Rollback: func(tx *gorm.DB) error { return errBoom() },
+	})
+
+	err := Down(db)
+	if err == nil {
+		t.Fatal("expected wrapped error from failing rollback")
+	}
+	if got := err.Error(); !contains(got, "migrate down") {
+		t.Errorf("expected 'migrate down' prefix in error, got %q", got)
+	}
+}
+
+func TestRollbackTo_WrapsError(t *testing.T) {
+	defer resetRegistry()()
+	db := openSQLite(t)
+
+	// RollbackTo a nonexistent target should error.
+	err := RollbackTo(db, "99999999999999")
+	if err == nil {
+		t.Fatal("expected error rolling back to nonexistent target")
+	}
+	if got := err.Error(); !contains(got, "rollback to") {
+		t.Errorf("expected 'rollback to' prefix in error, got %q", got)
+	}
+}
+
+// --- tiny local helpers (kept here so the test file is self-contained) ---
+
+func errBoom() error { return &boomError{} }
+
+type boomError struct{}
+
+func (b *boomError) Error() string { return "boom" }
+
+func contains(s, sub string) bool {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
+}
+
 func openSQLite(t *testing.T) *gorm.DB {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
