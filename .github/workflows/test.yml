@@ -1,0 +1,88 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test (Go + Postgres)
+    runs-on: ubuntu-latest
+
+    # Postgres service for integration tests. The connection package defaults
+    # to DB_HOST=localhost / DB_NAME=app / DB_USERNAME=postgres / DB_PASSWORD=postgres,
+    # so no env wiring is needed — these values just match.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: app
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd=pg_isready
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: .go-version
+          cache: true
+
+      - name: Verify go.mod is tidy
+        run: |
+          go mod tidy
+          if ! git diff --quiet -- go.mod go.sum; then
+            echo "::error::go.mod or go.sum is not tidy. Run 'go mod tidy' locally and commit the result."
+            git --no-pager diff -- go.mod go.sum
+            exit 1
+          fi
+
+      - name: Build
+        run: go build ./...
+
+      - name: Run tests with coverage
+        run: go test -count=1 -coverpkg=./... -coverprofile=cov.out ./...
+
+      - name: Enforce 90% per-package coverage
+        run: |
+          set -o pipefail
+          ./scripts/check-coverage.sh 90 --full | tee cov_summary.txt
+
+      - name: Coverage summary
+        if: always()
+        run: |
+          {
+            echo "## Coverage"
+            echo ""
+            echo "### Per-package"
+            echo '```'
+            cat cov_summary.txt 2>/dev/null || echo "(coverage script did not run)"
+            echo '```'
+            echo ""
+            echo "### Function-level (top 40)"
+            echo '```'
+            (go tool cover -func=cov.out 2>/dev/null | tail -40) || echo "(no cov.out)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage profile
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: cov.out
+          if-no-files-found: ignore
