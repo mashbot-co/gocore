@@ -5,6 +5,14 @@
 gqlgen
 migrate
 
+# ...but the source directories of those tools must stay tracked. The bare
+# patterns above otherwise match the directories themselves and hide every
+# file inside. Re-including the directories lets the source files surface
+# again; files inside that match the binary name (e.g. `tools/migrate/migrate`
+# after `go build`) stay ignored.
+!tools/gqlgen/
+!tools/migrate/
+
 # Test coverage outputs
 cov.out
 cov.html

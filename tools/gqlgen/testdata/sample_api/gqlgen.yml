@@ -1,0 +1,20 @@
+schema:
+  - graph/schema/generated/*.graphql
+
+exec:
+  filename: graph/generated/generated.go
+  package: generated
+
+autobind:
+  - example.com/sample/models
+  - example.com/sample/services/foo
+
+services:
+  - path: packages/backend/services/foo
+    import: example.com/sample/services/foo
+  - path: packages/backend/services/bar
+    import: example.com/sample/services/bar
+
+models:
+  UUID:
+    model: testapi/graph/model.UUID
