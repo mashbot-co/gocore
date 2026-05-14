@@ -54,8 +54,8 @@ package resolver
 import (
 	"context"
 	"fmt"
-	"github.com/mashbot-co/gocore/connection"
-	"github.com/mashbot-co/gocore/crud"
+	"github.com/mashbot-co/gocore/db/connection"
+	"github.com/mashbot-co/gocore/db/crud"
 	"%s/graph/generated"
 	models %q
 
@@ -78,6 +78,12 @@ import (
 		if pkField == nil {
 			continue
 		}
+		// Models that opt out of auto queries supply hand-written Get/List
+		// resolvers in the resolver package — usually to enforce authorization
+		// (e.g. project list filtered by membership).
+		if m.SkipQueries {
+			continue
+		}
 
 		info := analyzePreloads(m)
 		hasPreloads := len(info.Paths) > 0
@@ -91,22 +97,24 @@ import (
 		}
 		needsEnrich := info.EnrichTenants || info.EnrichUsers || len(info.NestedEnrich) > 0
 
+		pkParam := pkParamName(m)
+
 		// FindByID
 		sb.WriteString(fmt.Sprintf("// %s retrieves a single %s by ID.\n", m.Name, toHumanReadable(m.Name)))
-		sb.WriteString(fmt.Sprintf("func (r *queryResolver) %s(ctx context.Context, id uuid.UUID) (*models.%s, error) {\n", m.Name, m.Name))
+		sb.WriteString(fmt.Sprintf("func (r *queryResolver) %s(ctx context.Context, %s uuid.UUID) (*models.%s, error) {\n", m.Name, pkParam, m.Name))
 		if !needsEnrich {
 			// Simple case — just preload and return.
 			if hasPreloads {
-				sb.WriteString(fmt.Sprintf("\treturn crud.FindByIDWithPreload[models.%s](ctx, r.DB, id%s)\n", m.Name, preloadArgs))
+				sb.WriteString(fmt.Sprintf("\treturn crud.FindByIDWithPreload[models.%s](ctx, r.DB, %s%s)\n", m.Name, pkParam, preloadArgs))
 			} else {
-				sb.WriteString(fmt.Sprintf("\treturn crud.FindByID[models.%s](ctx, r.DB, id)\n", m.Name))
+				sb.WriteString(fmt.Sprintf("\treturn crud.FindByID[models.%s](ctx, r.DB, %s)\n", m.Name, pkParam))
 			}
 		} else {
 			// Need post-load enrichment — fetch, enrich, return.
 			if hasPreloads {
-				sb.WriteString(fmt.Sprintf("\trecord, err := crud.FindByIDWithPreload[models.%s](ctx, r.DB, id%s)\n", m.Name, preloadArgs))
+				sb.WriteString(fmt.Sprintf("\trecord, err := crud.FindByIDWithPreload[models.%s](ctx, r.DB, %s%s)\n", m.Name, pkParam, preloadArgs))
 			} else {
-				sb.WriteString(fmt.Sprintf("\trecord, err := crud.FindByID[models.%s](ctx, r.DB, id)\n", m.Name))
+				sb.WriteString(fmt.Sprintf("\trecord, err := crud.FindByID[models.%s](ctx, r.DB, %s)\n", m.Name, pkParam))
 			}
 			sb.WriteString("\tif err != nil {\n\t\treturn nil, err\n\t}\n")
 			// EnrichTenants and EnrichUsers both work on a []Model slice, so we
@@ -190,29 +198,32 @@ import (
 		sb.WriteString(fmt.Sprintf("\treturn crud.Create[models.%s](ctx, r.DB, record)\n", m.Name))
 		sb.WriteString("}\n\n")
 
+		pkParam := pkParamName(m)
+
 		// Update
 		sb.WriteString(fmt.Sprintf("// Update%s updates an existing %s by ID.\n", m.Name, toHumanReadable(m.Name)))
-		sb.WriteString(fmt.Sprintf("func (r *mutationResolver) Update%s(ctx context.Context, id uuid.UUID, input generated.Update%sInput) (*models.%s, error) {\n", m.Name, m.Name, m.Name))
+		sb.WriteString(fmt.Sprintf("func (r *mutationResolver) Update%s(ctx context.Context, %s uuid.UUID, input generated.Update%sInput) (*models.%s, error) {\n", m.Name, pkParam, m.Name, m.Name))
 		sb.WriteString(fmt.Sprintf("\tupdates := updateToMap(input)\n"))
-		sb.WriteString(fmt.Sprintf("\treturn crud.Update[models.%s](ctx, r.DB, id, updates)\n", m.Name))
+		sb.WriteString(fmt.Sprintf("\treturn crud.Update[models.%s](ctx, r.DB, %s, updates)\n", m.Name, pkParam))
 		sb.WriteString("}\n\n")
 
 		// Delete
 		sb.WriteString(fmt.Sprintf("// Delete%s deletes a %s by ID.\n", m.Name, toHumanReadable(m.Name)))
-		sb.WriteString(fmt.Sprintf("func (r *mutationResolver) Delete%s(ctx context.Context, id uuid.UUID) (bool, error) {\n", m.Name))
-		sb.WriteString(fmt.Sprintf("\terr := crud.Delete[models.%s](ctx, r.DB, id)\n", m.Name))
+		sb.WriteString(fmt.Sprintf("func (r *mutationResolver) Delete%s(ctx context.Context, %s uuid.UUID) (bool, error) {\n", m.Name, pkParam))
+		sb.WriteString(fmt.Sprintf("\terr := crud.Delete[models.%s](ctx, r.DB, %s)\n", m.Name, pkParam))
 		sb.WriteString("\treturn err == nil, err\n")
 		sb.WriteString("}\n\n")
 	}
 
 	// Custom mutation resolvers — generated from // graphql:mutation annotations
 	for _, m := range models {
+		pkParam := pkParamName(m)
 		for _, mut := range m.Mutations {
 			mutName := toCamelCase(toSnakeCase(mut.MethodName)) + m.Name
 			mutName = strings.ToUpper(mutName[:1]) + mutName[1:]
 
 			// Build Go function signature params
-			goParams := "ctx context.Context, id uuid.UUID"
+			goParams := fmt.Sprintf("ctx context.Context, %s uuid.UUID", pkParam)
 			callArgs := ""
 			for _, p := range mut.Params {
 				goParams += fmt.Sprintf(", %s %s", p.Name, p.GoType)
@@ -225,7 +236,7 @@ import (
 			}
 
 			sb.WriteString(fmt.Sprintf("func (r *mutationResolver) %s(%s) (*models.%s, error) {\n", mutName, goParams, m.Name))
-			sb.WriteString(fmt.Sprintf("\trecord, err := crud.FindByID[models.%s](ctx, r.DB, id)\n", m.Name))
+			sb.WriteString(fmt.Sprintf("\trecord, err := crud.FindByID[models.%s](ctx, r.DB, %s)\n", m.Name, pkParam))
 			sb.WriteString("\tif err != nil {\n")
 			sb.WriteString("\t\treturn nil, err\n")
 			sb.WriteString("\t}\n")
@@ -325,11 +336,31 @@ import (
 		sb.WriteString("}\n\n")
 	}
 
-	// Suppress unused imports
+	// Suppress unused imports. Defensive — emitted regardless of what
+	// resolvers landed in this file, so models opting fully out of auto
+	// CRUD/queries still produce a compilable shell. The blank-assigns
+	// reference each imported package at least once.
+	sb.WriteString("var _ context.Context\n")
 	sb.WriteString("var _ = connection.CurrentUser\n")
-	sb.WriteString("var _ = fmt.Errorf\n\n")
+	sb.WriteString("var _ = fmt.Errorf\n")
+	sb.WriteString("var _ = uuid.Nil\n")
+	sb.WriteString("var _ generated.PaginationInput\n")
+	if anchor := anyModelName(models); anchor != "" {
+		sb.WriteString(fmt.Sprintf("var _ models.%s\n", anchor))
+		sb.WriteString(fmt.Sprintf("var _ = crud.FindByID[models.%s]\n\n", anchor))
+	}
 
 	return sb.String()
+}
+
+// anyModelName returns the first GraphQL-marked model's struct name, useful
+// when emitting blank-assigns that reference the consumer's models package
+// without knowing which specific model will be in scope.
+func anyModelName(models []ModelDef) string {
+	if len(models) > 0 {
+		return models[0].Name
+	}
+	return ""
 }
 
 // collectServiceImports returns unique import paths from service-sourced static definitions.

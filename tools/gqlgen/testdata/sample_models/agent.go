@@ -4,7 +4,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/mashbot-co/gocore/models/mixins"
+	"github.com/mashbot-co/gocore/db/mixins"
 )
 
 // Agent is a registered AI agent. Its description spans

@@ -124,18 +124,18 @@ func runPipeline(modelsDir, apiDir string, run99designs bool) error {
 	}
 	fmt.Printf("  wrote %s\n", helpersPath)
 
-	writeCleanGqlgenConfig(apiDir)
+	cleanConfigRelPath := writeCleanGqlgenConfig(apiDir)
 
 	if run99designs {
 		fmt.Println("Running github.com/99designs/gqlgen generate …")
-		cmd := exec.Command("go", "run", "github.com/99designs/gqlgen", "generate", "--config", "gqlgen.clean.yml")
+		cmd := exec.Command("go", "run", "github.com/99designs/gqlgen", "generate", "--config", cleanConfigRelPath)
 		cmd.Dir = apiDir
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("gqlgen generate failed: %w", err)
 		}
-		os.Remove(filepath.Join(apiDir, "gqlgen.clean.yml"))
+		os.Remove(filepath.Join(apiDir, cleanConfigRelPath))
 		os.Remove(filepath.Join(apiDir, "graph", "resolver", "_gqlgen_stubs.go"))
 	}
 
@@ -143,14 +143,40 @@ func runPipeline(modelsDir, apiDir string, run99designs bool) error {
 	return nil
 }
 
-// writeCleanGqlgenConfig reads gqlgen.yml, strips the 'services' section, and
-// writes it as gqlgen.clean.yml for the official gqlgen generate tool.
-func writeCleanGqlgenConfig(apiDir string) {
-	src := filepath.Join(apiDir, "gqlgen.yml")
+// gqlgenConfigPath finds the consumer's gqlgen.yml. Looks in
+// <apiDir>/config/gqlgen.yml first (new layout), falls back to
+// <apiDir>/gqlgen.yml (old layout — kept for backward compat during
+// migrations). Returns the path relative to apiDir, suitable for passing
+// to gqlgen's --config flag with cmd.Dir = apiDir.
+func gqlgenConfigPath(apiDir string) string {
+	if _, err := os.Stat(filepath.Join(apiDir, "config", "gqlgen.yml")); err == nil {
+		return filepath.Join("config", "gqlgen.yml")
+	}
+	return "gqlgen.yml"
+}
+
+// writeCleanGqlgenConfig reads gqlgen.yml (from config/ if present, root
+// otherwise), strips the 'services' section, rewrites any `../`-prefixed
+// path entries so the resulting file's paths are relative to apiDir, and
+// writes the cleaned copy at <apiDir>/gqlgen.clean.yml. Returns the
+// apiDir-relative path of the cleaned file ("gqlgen.clean.yml") for the
+// caller to pass to gqlgen via --config.
+//
+// Putting the cleaned file at the apiDir root (rather than in config/)
+// avoids gqlgen's package-detection getting confused by paths that climb
+// out of the config directory via `../`.
+func writeCleanGqlgenConfig(apiDir string) string {
+	rel := gqlgenConfigPath(apiDir)
+	src := filepath.Join(apiDir, rel)
 	data, err := os.ReadFile(src)
 	if err != nil {
-		return
+		return "gqlgen.clean.yml"
 	}
+
+	// If the source lives in config/, path entries inside it use `../` to
+	// refer to siblings of the config dir. After rewriting they become
+	// apiDir-relative (drop the `../` once).
+	stripParent := filepath.Dir(rel) != "."
 
 	var clean strings.Builder
 	inServices := false
@@ -166,13 +192,17 @@ func writeCleanGqlgenConfig(apiDir string) {
 		}
 
 		if !inServices {
+			if stripParent {
+				line = strings.ReplaceAll(line, "../", "")
+			}
 			clean.WriteString(line)
 			clean.WriteByte('\n')
 		}
 	}
 
-	dst := filepath.Join(apiDir, "gqlgen.clean.yml")
-	os.WriteFile(dst, []byte(clean.String()), 0644)
+	cleanRel := "gqlgen.clean.yml"
+	os.WriteFile(filepath.Join(apiDir, cleanRel), []byte(clean.String()), 0644)
+	return cleanRel
 }
 
 // readModuleName reads the module name from go.mod in the given directory.
@@ -208,7 +238,7 @@ type serviceEntry struct {
 //
 // Returns "" if the file is missing or autobind is empty.
 func readAutobindFromConfig(apiDir string) string {
-	f, err := os.Open(filepath.Join(apiDir, "gqlgen.yml"))
+	f, err := os.Open(filepath.Join(apiDir, gqlgenConfigPath(apiDir)))
 	if err != nil {
 		return ""
 	}
@@ -246,7 +276,7 @@ func readAutobindFromConfig(apiDir string) string {
 //	  - path: packages/backend/services/tenant
 //	    import: github.com/mashbot-co/gocore/services/tenant
 func readServicesFromConfig(apiDir string) []serviceEntry {
-	f, err := os.Open(filepath.Join(apiDir, "gqlgen.yml"))
+	f, err := os.Open(filepath.Join(apiDir, gqlgenConfigPath(apiDir)))
 	if err != nil {
 		return nil
 	}

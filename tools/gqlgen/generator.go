@@ -188,6 +188,22 @@ func generateInputs(models []ModelDef) string {
 }
 
 func generateQueries(models []ModelDef) string {
+	// First pass: do any of the models actually contribute auto queries?
+	// When all models opt out via skipQueries the GraphQL parser would
+	// choke on an empty `type Query { }`. Emit a comment-only file in
+	// that case; consumers declare `type Query` themselves in a custom
+	// schema file (typically graph/schema/custom/_base.graphql).
+	hasAny := false
+	for _, m := range models {
+		if primaryKeyField(m) != nil && !m.SkipQueries {
+			hasAny = true
+			break
+		}
+	}
+	if !hasAny {
+		return "# AUTO-GENERATED — no auto queries to emit; all models opted out via // graphql:skipQueries.\n# The root `type Query` must be declared in a custom schema file (e.g. graph/schema/custom/_base.graphql).\n"
+	}
+
 	var sb strings.Builder
 	sb.WriteString("# AUTO-GENERATED — do not edit. Generated from Go models by tools/gqlgen-schema.\n\n")
 	sb.WriteString("type Query {\n")
@@ -197,6 +213,11 @@ func generateQueries(models []ModelDef) string {
 		if pkField == nil {
 			continue
 		}
+		// Models that opt out of auto queries supply hand-written resolvers
+		// and frequently a hand-written schema entry in graph/schema/custom/.
+		if m.SkipQueries {
+			continue
+		}
 
 		singular := toGraphQLName(m.Name)
 		plural := pluralize(singular)
@@ -204,7 +225,7 @@ func generateQueries(models []ModelDef) string {
 
 		// Single by ID
 		writeDescription(&sb, fmt.Sprintf("Retrieve a single %s by its unique identifier.", humanName), "  ")
-		sb.WriteString(fmt.Sprintf("  %s(id: UUID!): %s\n", singular, m.Name))
+		sb.WriteString(fmt.Sprintf("  %s(%s: UUID!): %s\n", singular, pkParamName(m), m.Name))
 
 		// List with optional filter and pagination
 		hasFilter := len(filterableFields(m)) > 0
@@ -237,9 +258,9 @@ func generateMutations(models []ModelDef) string {
 		writeDescription(&sb, fmt.Sprintf("Create a new %s.", humanName), "  ")
 		sb.WriteString(fmt.Sprintf("  create%s(input: Create%sInput!): %s!\n", m.Name, m.Name, m.Name))
 		writeDescription(&sb, fmt.Sprintf("Update an existing %s by ID.", humanName), "  ")
-		sb.WriteString(fmt.Sprintf("  update%s(id: UUID!, input: Update%sInput!): %s!\n", m.Name, m.Name, m.Name))
+		sb.WriteString(fmt.Sprintf("  update%s(%s: UUID!, input: Update%sInput!): %s!\n", m.Name, pkParamName(m), m.Name, m.Name))
 		writeDescription(&sb, fmt.Sprintf("Delete a %s by ID.", humanName), "  ")
-		sb.WriteString(fmt.Sprintf("  delete%s(id: UUID!): Boolean!\n", m.Name))
+		sb.WriteString(fmt.Sprintf("  delete%s(%s: UUID!): Boolean!\n", m.Name, pkParamName(m)))
 	}
 
 	sb.WriteString("}\n")
@@ -272,8 +293,8 @@ func generateCustomMutations(models []ModelDef) string {
 			mutName := toCamelCase(toSnakeCase(mut.MethodName)) + m.Name
 			mutName = strings.ToLower(mutName[:1]) + mutName[1:]
 
-			// Build parameter list — always starts with id: UUID!
-			params := "id: UUID!"
+			// Build parameter list — always starts with the model's PK arg.
+			params := pkParamName(m) + ": UUID!"
 			for _, p := range mut.Params {
 				gqlType := goTypeToGraphQL(p.GoType, false)
 				params += fmt.Sprintf(", %s: %s", p.Name, gqlType)
@@ -514,6 +535,20 @@ func primaryKeyField(m ModelDef) *FieldDef {
 		}
 	}
 	return nil
+}
+
+// pkParamName returns the GraphQL argument name to use for the single-key
+// path of a model (get / update / delete / per-mutation-on-instance). It's
+// the camelCase form of the PK's JSON column name — e.g. "membership_id" →
+// "membershipId" — so the schema reads as `membership(membershipId: UUID!)`
+// matching the type's field name rather than a bland `id`. Falls back to
+// "id" only for models without a discoverable PK; the callers already guard
+// on primaryKeyField != nil so the fallback is belt-and-braces.
+func pkParamName(m ModelDef) string {
+	if pk := primaryKeyField(m); pk != nil {
+		return toCamelCase(pk.JSONName)
+	}
+	return "id"
 }
 
 // toHumanReadable converts PascalCase to a human-readable string.

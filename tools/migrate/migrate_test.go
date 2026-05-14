@@ -18,8 +18,8 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
-	"github.com/mashbot-co/gocore/connection"
-	"github.com/mashbot-co/gocore/migrations"
+	"github.com/mashbot-co/gocore/db/connection"
+	"github.com/mashbot-co/gocore/db/migrations"
 )
 
 // --- shared helpers ---

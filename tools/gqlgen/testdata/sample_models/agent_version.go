@@ -2,7 +2,7 @@ package models
 
 import (
 	"github.com/google/uuid"
-	"github.com/mashbot-co/gocore/models/mixins"
+	"github.com/mashbot-co/gocore/db/mixins"
 )
 
 // AgentVersion represents one immutable version of an Agent.

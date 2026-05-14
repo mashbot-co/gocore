@@ -26,7 +26,7 @@ func TestGenerateResolvers_ImportsModelsAtConsumerPath(t *testing.T) {
 	if !strings.Contains(got, `models "example.com/sample/models"`) {
 		t.Errorf("expected models import at consumer's path, got:\n%s", got)
 	}
-	if !strings.Contains(got, `"github.com/mashbot-co/gocore/connection"`) {
+	if !strings.Contains(got, `"github.com/mashbot-co/gocore/db/connection"`) {
 		t.Errorf("expected connection import at gocore's canonical path, got:\n%s", got)
 	}
 }

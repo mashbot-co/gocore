@@ -25,8 +25,8 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/mashbot-co/gocore/config"
-	"github.com/mashbot-co/gocore/connection"
-	"github.com/mashbot-co/gocore/migrations"
+	"github.com/mashbot-co/gocore/db/connection"
+	"github.com/mashbot-co/gocore/db/migrations"
 )
 
 // RunCLI is the local-mode entry point. Called from the consumer's

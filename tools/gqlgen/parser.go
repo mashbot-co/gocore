@@ -24,6 +24,17 @@ type ModelDef struct {
 	// must provide the corresponding CreateX/UpdateX/DeleteX methods.
 	// Set by `// graphql:skipCrud` on the struct doc.
 	SkipCRUD bool
+	// SkipQueries suppresses generation of the auto Get/List query resolvers
+	// (e.g. project, projects) for this model. The Filter input and List type
+	// are still emitted so hand-written resolvers can return them. The model
+	// type itself, create/update inputs, and mutations are unaffected.
+	// Set by `// graphql:skipQueries` on the struct doc.
+	SkipQueries bool
+	// Public opts the model out of the default `@requireAuth` directive on
+	// its auto-generated query and mutation fields. Use sparingly — most
+	// API surfaces should require authentication. Set by `// graphql:public`
+	// on the struct doc.
+	Public bool
 }
 
 // MutationDef represents a GraphQL mutation method on a model.
@@ -707,8 +718,15 @@ func parseStruct(name string, description string, st *ast.StructType) *ModelDef 
 
 	skipCRUD := strings.Contains(description, "graphql:skipCrud")
 	if skipCRUD {
-		// Strip the annotation token from the description so generated docs stay clean.
 		description = strings.TrimSpace(strings.ReplaceAll(description, "graphql:skipCrud", ""))
+	}
+	skipQueries := strings.Contains(description, "graphql:skipQueries")
+	if skipQueries {
+		description = strings.TrimSpace(strings.ReplaceAll(description, "graphql:skipQueries", ""))
+	}
+	public := strings.Contains(description, "graphql:public")
+	if public {
+		description = strings.TrimSpace(strings.ReplaceAll(description, "graphql:public", ""))
 	}
 
 	return &ModelDef{
@@ -718,6 +736,8 @@ func parseStruct(name string, description string, st *ast.StructType) *ModelDef 
 		Relationships: rels,
 		Mixins:        mixins,
 		SkipCRUD:      skipCRUD,
+		SkipQueries:   skipQueries,
+		Public:        public,
 	}
 }
 

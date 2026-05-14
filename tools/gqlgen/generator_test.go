@@ -73,8 +73,8 @@ func TestGenerateSchema_QueriesIncludeSingularAndListForms(t *testing.T) {
 	files := GenerateSchema(result.Models)
 	queries := files["queries.graphql"]
 
-	if !strings.Contains(queries, "agent(id: UUID!): Agent") {
-		t.Errorf("expected agent(id: UUID!) query, got:\n%s", queries)
+	if !strings.Contains(queries, "agent(agentId: UUID!): Agent") {
+		t.Errorf("expected agent(agentId: UUID!) query, got:\n%s", queries)
 	}
 	if !strings.Contains(queries, "agents(filter:") {
 		t.Errorf("expected list query 'agents(filter: ...)', got:\n%s", queries)

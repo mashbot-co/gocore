@@ -2,7 +2,7 @@ package models
 
 import (
 	"github.com/google/uuid"
-	"github.com/mashbot-co/gocore/models/mixins"
+	"github.com/mashbot-co/gocore/db/mixins"
 )
 
 // User is a person who uses the system.
