@@ -15,11 +15,11 @@ import (
 // captureRecord captures the body, headers, and reply behavior of one
 // inbound SendGrid request.
 type captureRecord struct {
-	auth         string
-	contentType  string
-	body         []byte
-	replyStatus  int
-	replyBody    string
+	auth        string
+	contentType string
+	body        []byte
+	replyStatus int
+	replyBody   string
 }
 
 // captureServer stands in for SendGrid. It captures requests and responds
@@ -177,9 +177,9 @@ func TestSend_PostsExpectedPayload(t *testing.T) {
 
 	// Use the bundled invitation template so we don't need extra fixtures.
 	Send("invitation.html", "You've been invited", map[string]any{
-		"AppURL":   "https://iro.studio",
-		"OrgName":  "Acme",
-		"Inviter":  "Alice",
+		"AppURL":    "https://iro.studio",
+		"OrgName":   "Acme",
+		"Inviter":   "Alice",
 		"AcceptURL": "https://iro.studio/accept",
 	}, []string{"user@example.com"})
 

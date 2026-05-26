@@ -36,7 +36,7 @@ func TestVersionedMixin_DefaultStatusIsDraft(t *testing.T) {
 	}
 
 	v := &versionedSample{
-		ID:           uuid.New(),
+		ID: uuid.New(),
 		VersionedMixin: VersionedMixin{
 			VersionLabel: "v1",
 			AuthoredBy:   uuid.New(),
@@ -64,7 +64,7 @@ func TestVersionedMixin_PolicyCheckNullable(t *testing.T) {
 	}
 
 	v := &versionedSample{
-		ID:           uuid.New(),
+		ID: uuid.New(),
 		VersionedMixin: VersionedMixin{
 			VersionLabel: "v1",
 			AuthoredBy:   uuid.New(),

@@ -58,6 +58,75 @@ type MembershipEntry struct {
 	Role      string    `json:"role"`
 }
 
+// SyncOption configures optional behaviour on SyncHandler. Use the
+// `With*` constructors below — direct field manipulation isn't part of
+// the API.
+type SyncOption func(*syncConfig)
+
+// SessionCookie describes the cross-subdomain session cookie set on
+// successful sync. Passed via WithSessionCookie.
+type SessionCookie struct {
+	// Name is the cookie name (e.g. "iro_session"). Required.
+	Name string
+	// Domain sets Domain= so the cookie is visible to every subdomain
+	// of the parent (e.g. ".iro.local" → www.iro.local + app.iro.local).
+	// Required for cross-subdomain use; omit for a host-only cookie.
+	Domain string
+	// Path defaults to "/" when empty.
+	Path string
+	// MaxAge in seconds. 0 falls back to a session cookie (cleared on
+	// browser close); use a value that matches the JWT's exp.
+	MaxAge int
+	// Secure must be true on HTTPS; browsers reject Secure cookies on
+	// plain HTTP, so dev with http needs false.
+	Secure bool
+	// HttpOnly hides the cookie from document.cookie. Strongly
+	// recommended true so XSS can't lift the session.
+	HttpOnly bool
+	// SameSite controls cross-site send behaviour. Lax is the right
+	// default for a typical sign-in → dashboard flow on a sibling
+	// subdomain (top-level navigation is allowed).
+	SameSite http.SameSite
+}
+
+type syncConfig struct {
+	cookie *SessionCookie
+}
+
+// WithSessionCookie tells SyncHandler to set a Set-Cookie header on
+// successful sync, alongside the JSON response. The cookie value is the
+// same token returned in the body.
+func WithSessionCookie(c SessionCookie) SyncOption {
+	return func(cfg *syncConfig) { cfg.cookie = &c }
+}
+
+// ClearSessionCookieHandler returns a gin handler that emits a Set-Cookie
+// for the configured session cookie with MaxAge=-1, telling the browser
+// to delete it immediately. Mount on a sign-out endpoint; pair with the
+// same SessionCookie value used in WithSessionCookie so Name/Domain/Path
+// match (browsers won't delete a cookie unless the clearing Set-Cookie's
+// scope matches the original). No auth required — anyone who has the
+// cookie already has the session, so clearing their own is a no-op risk.
+func ClearSessionCookieHandler(ck SessionCookie) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		path := ck.Path
+		if path == "" {
+			path = "/"
+		}
+		http.SetCookie(c.Writer, &http.Cookie{
+			Name:     ck.Name,
+			Value:    "",
+			Path:     path,
+			Domain:   ck.Domain,
+			MaxAge:   -1,
+			Secure:   ck.Secure,
+			HttpOnly: ck.HttpOnly,
+			SameSite: ck.SameSite,
+		})
+		c.Status(http.StatusNoContent)
+	}
+}
+
 // SyncHooks is the consumer-supplied glue for SyncHandler. The handler
 // owns the flow (verify Clerk, parse body, mint JWT, format response);
 // these hooks own the model-touching parts (queries, updates, claims
@@ -87,11 +156,16 @@ type SyncHooks struct {
 }
 
 // SyncHandler wires the hooks into a gin.HandlerFunc. Mount it via
-// `r.POST("/auth/sync", auth.SyncHandler(db, hooks))`.
-func SyncHandler(db *gorm.DB, hooks SyncHooks) gin.HandlerFunc {
+// `r.POST("/auth/sync", auth.SyncHandler(db, hooks))`. Pass options
+// (e.g. WithSessionCookie) to layer in optional behaviour.
+func SyncHandler(db *gorm.DB, hooks SyncHooks, opts ...SyncOption) gin.HandlerFunc {
 	if hooks.FindOrCreateUser == nil || hooks.ListMemberships == nil ||
 		hooks.UpdateLastScope == nil || hooks.BuildClaims == nil {
 		log.Fatal("auth.SyncHandler: all SyncHooks fields must be set")
+	}
+	cfg := syncConfig{}
+	for _, opt := range opts {
+		opt(&cfg)
 	}
 	return func(c *gin.Context) {
 		clerkToken, err := BearerFrom(c)
@@ -169,6 +243,27 @@ func SyncHandler(db *gorm.DB, hooks SyncHooks) gin.HandlerFunc {
 			resp.CurrentScopeID = &scope
 			resp.CurrentRole = &role
 		}
+
+		if cfg.cookie != nil {
+			ck := cfg.cookie
+			path := ck.Path
+			if path == "" {
+				path = "/"
+			}
+			// gin's SetCookie doesn't expose SameSite, so set it on the
+			// underlying ResponseWriter via http.SetCookie directly.
+			http.SetCookie(c.Writer, &http.Cookie{
+				Name:     ck.Name,
+				Value:    token,
+				Path:     path,
+				Domain:   ck.Domain,
+				MaxAge:   ck.MaxAge,
+				Secure:   ck.Secure,
+				HttpOnly: ck.HttpOnly,
+				SameSite: ck.SameSite,
+			})
+		}
+
 		c.JSON(http.StatusOK, resp)
 	}
 }

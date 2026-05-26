@@ -28,7 +28,7 @@ func init() {
 type DirtyMixin struct {
 	snapshot map[string]any `gorm:"-" json:"-"`
 	parent   interface{}    `gorm:"-" json:"-"`
-	mu       sync.RWMutex  `gorm:"-" json:"-"`
+	mu       sync.RWMutex   `gorm:"-" json:"-"`
 }
 
 // FieldChange represents a before/after pair for a changed field.

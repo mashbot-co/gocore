@@ -8,7 +8,7 @@ import (
 // SoftDeleteMixin adds soft delete support using GORM's built-in mechanism.
 type SoftDeleteMixin struct {
 	DeletedAt gorm.DeletedAt `gorm:"index" json:"deleted_at"`
-	DeletedBy *uuid.UUID `json:"deleted_by"`
+	DeletedBy *uuid.UUID     `json:"deleted_by"`
 }
 
 // WithDeleted returns a scope that includes soft-deleted records.

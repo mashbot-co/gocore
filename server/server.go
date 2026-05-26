@@ -135,6 +135,15 @@ type Config struct {
 	// mode, where liftClaims has already populated everything from the
 	// token, this should typically be a no-op.
 	EnrichUserContext func(c *gin.Context, db *gorm.DB)
+
+	// PostEnvLoad runs after .env and SSM have populated the process
+	// environment but before any middleware is built. Use it to derive
+	// env vars from already-loaded values — for example, composing
+	// CORS_ALLOWED_ORIGINS from a product-specific subdomain layout
+	// (www., app., …) without duplicating the .env-walking logic. An
+	// explicit env value should win; the hook should no-op when the
+	// derived target is already set.
+	PostEnvLoad func()
 }
 
 // Run is the single entry point — handles every step the API needs to
@@ -146,6 +155,10 @@ func Run(cfg Config) {
 
 	loadEnvFile()
 	config.MustLoadFromSSM(context.Background())
+
+	if cfg.PostEnvLoad != nil {
+		cfg.PostEnvLoad()
+	}
 
 	gocore.Init(gocore.Config{
 		Name:             cfg.Name,
@@ -251,6 +264,11 @@ func buildRouter(cfg Config, gormDB *gorm.DB) *gin.Engine {
 	if cfg.RegisterREST != nil {
 		cfg.RegisterREST(restGroup, gormDB)
 	}
+
+	// JWKS at the standards-compliant well-known path (RFC 5785), unversioned
+	// so verifiers like jose's createRemoteJWKSet can discover it without
+	// knowing the consumer's RoutePrefix.
+	r.GET("/.well-known/jwks.json", gocoreauth.JWKSHandler)
 
 	srv := handler.NewDefaultServer(cfg.BuildSchema(gormDB))
 

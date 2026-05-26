@@ -70,8 +70,8 @@ type tenantedItem struct {
 }
 
 type projectedItem struct {
-	ID uuid.UUID `gorm:"type:text;primaryKey"`
-	Name string `gorm:"size:255"`
+	ID   uuid.UUID `gorm:"type:text;primaryKey"`
+	Name string    `gorm:"size:255"`
 	ProjectMixin
 }
 

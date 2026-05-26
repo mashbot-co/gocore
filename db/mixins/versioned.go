@@ -15,7 +15,7 @@ import (
 type VersionedMixin struct {
 	VersionLabel      string     `gorm:"size:50;not null" json:"version_label"`
 	Status            string     `gorm:"size:50;not null;default:'draft'" json:"status"`
-	AuthoredBy        uuid.UUID `gorm:"index;type:uuid;not null" json:"authored_by"`
+	AuthoredBy        uuid.UUID  `gorm:"index;type:uuid;not null" json:"authored_by"`
 	ChangeSummary     *string    `gorm:"type:text" json:"change_summary,omitempty"`
 	PolicyCheckStatus *string    `gorm:"size:50" json:"policy_check_status,omitempty"`
 	PolicyCheckAt     *time.Time `gorm:"" json:"policy_check_at,omitempty"`
