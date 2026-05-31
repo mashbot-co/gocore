@@ -36,6 +36,7 @@ import (
 	"github.com/mashbot-co/gocore/db/connection"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverdatabasesql"
+	"github.com/riverqueue/river/rivertype"
 )
 
 // DefaultQueue is the queue name used when an enqueue specifies none.
@@ -53,6 +54,10 @@ type Args interface {
 type InsertOpts struct {
 	// Queue routes the job to a named worker pool. Empty means DefaultQueue.
 	Queue string
+	// RunAt schedules the job to become available at a future time rather than
+	// immediately — used for self-pacing reconcilers and retries. Zero value
+	// means "run as soon as a worker is free".
+	RunAt time.Time
 }
 
 // Enqueuer is the produce-side seam. App code (resolvers, model hooks) depends
@@ -94,7 +99,13 @@ func NewClient(workers *river.Workers, cfg Config) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("job: get *sql.DB: %w", err)
 	}
-	riverCfg := &river.Config{Workers: workers}
+	riverCfg := &river.Config{
+		Workers: workers,
+		// Uniform per-job lifecycle logging (started / finished / retry / give-up)
+		// across every handler — see logMiddleware. Harmless on enqueue-only
+		// clients (it only fires when a job is worked).
+		Middleware: []rivertype.Middleware{&logMiddleware{}},
+	}
 	if len(cfg.Queues) > 0 {
 		riverCfg.Queues = make(map[string]river.QueueConfig, len(cfg.Queues))
 		for name, maxWorkers := range cfg.Queues {
@@ -124,7 +135,7 @@ func riverInsertOpts(opts *InsertOpts) *river.InsertOpts {
 	if opts == nil {
 		return nil
 	}
-	return &river.InsertOpts{Queue: opts.Queue}
+	return &river.InsertOpts{Queue: opts.Queue, ScheduledAt: opts.RunAt}
 }
 
 // Start begins polling for and running jobs. Use on a worker client.

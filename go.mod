@@ -18,6 +18,7 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/riverqueue/river v0.38.0
 	github.com/riverqueue/river/riverdriver/riverdatabasesql v0.38.0
+	github.com/riverqueue/river/rivertype v0.38.0
 	github.com/vektah/gqlparser/v2 v2.5.33
 	gopkg.in/yaml.v3 v3.0.1
 	gorm.io/driver/postgres v1.5.11
@@ -75,7 +76,6 @@ require (
 	github.com/quic-go/quic-go v0.59.0 // indirect
 	github.com/riverqueue/river/riverdriver v0.38.0 // indirect
 	github.com/riverqueue/river/rivershared v0.38.0 // indirect
-	github.com/riverqueue/river/rivertype v0.38.0 // indirect
 	github.com/sosodev/duration v1.4.0 // indirect
 	github.com/stretchr/testify v1.11.1 // indirect
 	github.com/tidwall/gjson v1.19.0 // indirect
