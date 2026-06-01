@@ -80,6 +80,20 @@ type Config struct {
 	// a worker (consuming) client; ignored for an enqueue-only client. Use
 	// DefaultQueue as the key for the default pool.
 	Queues map[string]int
+
+	// PeriodicJobs are recurring jobs enqueued on a schedule by River's
+	// leader-elected periodic enqueuer (run-once across the worker fleet, no
+	// double-fire). Consume-side, like the typed Worker registry, so they're
+	// River-typed: build them with river.NewPeriodicJob in the worker binary.
+	// Empty for enqueue-only clients.
+	PeriodicJobs []*river.PeriodicJob
+
+	// JobTimeout caps how long a single job may run before its context is
+	// cancelled. Zero uses River's default (1 minute). Jobs that make several
+	// sequential external-API calls (e.g. cloud provisioning) routinely need more
+	// than a minute — a slow upstream otherwise cancels the job mid-call, surfacing
+	// as a "context deadline exceeded" on whichever call was in flight.
+	JobTimeout time.Duration
 }
 
 // Client wraps a River client. It is both an Enqueuer (produce) and, when
@@ -105,12 +119,17 @@ func NewClient(workers *river.Workers, cfg Config) (*Client, error) {
 		// across every handler — see logMiddleware. Harmless on enqueue-only
 		// clients (it only fires when a job is worked).
 		Middleware: []rivertype.Middleware{&logMiddleware{}},
+		// Recurring jobs (nil for enqueue-only clients — River accepts nil).
+		PeriodicJobs: cfg.PeriodicJobs,
 	}
 	if len(cfg.Queues) > 0 {
 		riverCfg.Queues = make(map[string]river.QueueConfig, len(cfg.Queues))
 		for name, maxWorkers := range cfg.Queues {
 			riverCfg.Queues[name] = river.QueueConfig{MaxWorkers: maxWorkers}
 		}
+	}
+	if cfg.JobTimeout > 0 {
+		riverCfg.JobTimeout = cfg.JobTimeout
 	}
 	rc, err := river.NewClient(riverdatabasesql.New(pool), riverCfg)
 	if err != nil {
