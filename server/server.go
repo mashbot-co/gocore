@@ -284,7 +284,19 @@ func buildRouter(cfg Config, gormDB *gorm.DB) *gin.Engine {
 
 	gqlGroup := r.Group(cfg.RoutePrefix)
 	if os.Getenv("GIN_MODE") == "release" {
-		gqlGroup.Use(middleware.JWTAuth(cfg.NewClaims, cfg.LiftClaims))
+		if cfg.AuthCatalog != nil {
+			// A field-level AuthorizeField gate is configured, so it governs
+			// per-field access (including the policy's `public:` fields). The
+			// route only needs to verify + lift a token when one is present and
+			// let anonymous requests through — required auth here would 401
+			// anonymous callers before public fields (e.g. public blog reads)
+			// could ever resolve.
+			gqlGroup.Use(middleware.JWTAuthOptional(cfg.NewClaims, cfg.LiftClaims))
+		} else {
+			// No field-level gate — keep the whole endpoint closed (secure by
+			// default) rather than exposing it to anonymous callers.
+			gqlGroup.Use(middleware.JWTAuth(cfg.NewClaims, cfg.LiftClaims))
+		}
 	} else {
 		gqlGroup.Use(middleware.OptionalAuth())
 	}

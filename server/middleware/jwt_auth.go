@@ -58,3 +58,40 @@ func JWTAuth(claimsFactory func() jwt.Claims, claimsHandler func(c *gin.Context,
 		c.Next()
 	}
 }
+
+// JWTAuthOptional is JWTAuth for endpoints that mix public and protected
+// access behind per-field authorization (the GraphQL endpoint). It verifies
+// and lifts claims when a Bearer token is present, but — unlike JWTAuth — does
+// NOT reject a request that omits the Authorization header. Anonymous callers
+// pass through so the field-level AuthorizeField directive governs access:
+// fields listed under `public:` in the endpoint policy resolve, everything else
+// is rejected with "insufficient permissions".
+//
+// A token that is present but malformed or fails verification is still a hard
+// 401 — that's a broken credential, not an anonymous request.
+func JWTAuthOptional(claimsFactory func() jwt.Claims, claimsHandler func(c *gin.Context, claims jwt.Claims)) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		h := c.GetHeader("Authorization")
+		if h == "" {
+			c.Next() // anonymous — the field directive decides what's reachable
+			return
+		}
+		if !strings.HasPrefix(h, "Bearer ") {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "malformed Authorization header"})
+			return
+		}
+		raw := strings.TrimPrefix(h, "Bearer ")
+
+		claims := claimsFactory()
+		if _, err := gocoreauth.VerifyToken(raw, claims); err != nil {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token: " + err.Error()})
+			return
+		}
+
+		if claimsHandler != nil {
+			claimsHandler(c, claims)
+		}
+
+		c.Next()
+	}
+}
