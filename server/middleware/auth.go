@@ -6,9 +6,11 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 
 	"github.com/mashbot-co/gocore"
+	gocoreauth "github.com/mashbot-co/gocore/server/auth"
 )
 
 // Auth validates the request's identity. Real JWT verification (provider JWKS)
@@ -39,16 +41,29 @@ func Auth() gin.HandlerFunc {
 	}
 }
 
-// OptionalAuth is identical to Auth in dev mode and a no-op in production.
-// Used in front of the GraphQL playground so introspection works without a
-// token. Resolvers are still responsible for checking auth on data access.
-func OptionalAuth() gin.HandlerFunc {
+// OptionalAuth is the dev-mode GraphQL gate. It never rejects — anonymous
+// requests pass so public fields and the playground work — but it resolves an
+// identity two ways:
+//
+//   - Stub headers (X-<App>-Stub-User-Id): manual dev without a real session.
+//   - A real Bearer JWT: e.g. a sibling app (Console/Platform) forwarding the
+//     nutility_session cookie. We verify it and lift claims so dev-mode auth
+//     matches production for genuine sessions. This is what lets the dashboards
+//     authenticate against a locally-running API.
+//
+// A present-but-invalid token (stale/expired cookie) is left unauthenticated
+// rather than aborting, so the caller simply bounces to re-login instead of
+// erroring; the field directive still rejects protected fields.
+func OptionalAuth(claimsFactory func() jwt.Claims, claimsHandler func(c *gin.Context, claims jwt.Claims)) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		applyStubHeaders(c)
 
-		if h := c.GetHeader("Authorization"); h != "" && strings.HasPrefix(h, "Bearer ") {
-			// TODO: when verification is wired up, parse the bearer token
-			// here and populate tenant_id / user_id from the claims.
+		if h := c.GetHeader("Authorization"); strings.HasPrefix(h, "Bearer ") {
+			raw := strings.TrimPrefix(h, "Bearer ")
+			claims := claimsFactory()
+			if _, err := gocoreauth.VerifyToken(raw, claims); err == nil && claimsHandler != nil {
+				claimsHandler(c, claims)
+			}
 		}
 
 		c.Next()

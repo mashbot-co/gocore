@@ -298,7 +298,10 @@ func buildRouter(cfg Config, gormDB *gorm.DB) *gin.Engine {
 			gqlGroup.Use(middleware.JWTAuth(cfg.NewClaims, cfg.LiftClaims))
 		}
 	} else {
-		gqlGroup.Use(middleware.OptionalAuth())
+		// Dev: never reject (stub headers + playground work), but verify + lift a
+		// real Bearer JWT when present so the dashboards can authenticate against
+		// a locally-running API.
+		gqlGroup.Use(middleware.OptionalAuth(cfg.NewClaims, cfg.LiftClaims))
 	}
 	if cfg.EnrichUserContext != nil {
 		gqlGroup.Use(enrichMiddleware(cfg.EnrichUserContext, gormDB))
