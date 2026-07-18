@@ -104,6 +104,31 @@ func TestGenerateSchema_HiddenFieldsExcluded(t *testing.T) {
 	}
 }
 
+// --- Comma-separated graphql tags (e.g. "readonly,nullable") ---
+
+func TestGenerateSchema_CommaTagReadonlyExcludedFromInputs(t *testing.T) {
+	result := loadSampleModels(t)
+	files := GenerateSchema(result.Models)
+	inputs := files["inputs.graphql"]
+
+	if strings.Contains(inputs, "payload:") {
+		t.Errorf("graphql:\"readonly,nullable\" field 'Payload' should NOT appear in inputs.graphql:\n%s", inputs)
+	}
+}
+
+func TestGenerateSchema_CommaTagNullableEmitsOptionalType(t *testing.T) {
+	result := loadSampleModels(t)
+	files := GenerateSchema(result.Models)
+	types := files["types.graphql"]
+
+	if !strings.Contains(types, "payload: JSON\n") {
+		t.Errorf("expected nullable 'payload: JSON' in types.graphql:\n%s", types)
+	}
+	if strings.Contains(types, "payload: JSON!") {
+		t.Errorf("graphql:\"readonly,nullable\" field 'Payload' must not be non-null:\n%s", types)
+	}
+}
+
 // --- Bindings ---
 
 func TestGenerateBindings_DocumentsEveryModel(t *testing.T) {

@@ -1,6 +1,7 @@
 package models
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -27,4 +28,6 @@ type Agent struct {
 	Versions []AgentVersion  `gorm:"foreignKey:AgentID" json:"versions,omitempty" graphql:"preload"`
 	Hidden   string          `gorm:"-" json:"hidden,omitempty" graphql:"-"`
 	ReadOnly string          `gorm:"-" json:"readonly,omitempty" graphql:"readonly"`
+	Payload  json.RawMessage `gorm:"type:jsonb" json:"payload" graphql:"readonly,nullable"` // Resolver-written JSON, null until first save
+
 }

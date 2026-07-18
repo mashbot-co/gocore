@@ -99,6 +99,17 @@ func writeDescription(sb *strings.Builder, desc string, indent string) {
 	sb.WriteString(fmt.Sprintf("%s\"%s\"\n", indent, desc))
 }
 
+// tagHas reports whether a field's graphql struct tag contains the given
+// value. Field tags are comma-separated, e.g. `graphql:"readonly,nullable"`.
+func tagHas(tag, value string) bool {
+	for _, v := range strings.Split(tag, ",") {
+		if strings.TrimSpace(v) == value {
+			return true
+		}
+	}
+	return false
+}
+
 func generateTypes(models []ModelDef) string {
 	var sb strings.Builder
 	sb.WriteString("# AUTO-GENERATED — do not edit. Generated from Go models by tools/gqlgen-schema.\n\n")
@@ -108,11 +119,11 @@ func generateTypes(models []ModelDef) string {
 		sb.WriteString(fmt.Sprintf("type %s {\n", m.Name))
 
 		for _, f := range m.Fields {
-			if f.GraphQLTag == "-" {
+			if tagHas(f.GraphQLTag, "-") {
 				continue
 			}
 			gqlName := toCamelCase(f.JSONName)
-			gqlType := goTypeToGraphQL(f.GoType, f.IsPointer)
+			gqlType := goTypeToGraphQL(f.GoType, f.IsPointer || tagHas(f.GraphQLTag, "nullable"))
 			writeDescription(&sb, f.Description, "  ")
 			sb.WriteString(fmt.Sprintf("  %s: %s\n", gqlName, gqlType))
 		}
@@ -145,10 +156,7 @@ func generateInputs(models []ModelDef) string {
 			sb.WriteString(fmt.Sprintf("input Create%sInput {\n", m.Name))
 			for _, f := range createFields {
 				gqlName := toCamelCase(f.JSONName)
-				gqlType := goTypeToGraphQL(f.GoType, true)
-				if !f.IsPointer {
-					gqlType = goTypeToGraphQL(f.GoType, false)
-				}
+				gqlType := goTypeToGraphQL(f.GoType, f.IsPointer || tagHas(f.GraphQLTag, "nullable"))
 				writeDescription(&sb, f.Description, "  ")
 				sb.WriteString(fmt.Sprintf("  %s: %s\n", gqlName, gqlType))
 			}
@@ -492,7 +500,7 @@ func writableFields(m ModelDef) []FieldDef {
 		if f.IsPrimaryKey {
 			continue
 		}
-		if f.GraphQLTag == "-" || f.GraphQLTag == "readonly" || f.GraphQLTag == "computed" {
+		if tagHas(f.GraphQLTag, "-") || tagHas(f.GraphQLTag, "readonly") || tagHas(f.GraphQLTag, "computed") {
 			continue
 		}
 		result = append(result, f)
@@ -506,10 +514,10 @@ func writableFields(m ModelDef) []FieldDef {
 func filterableFields(m ModelDef) []FieldDef {
 	var result []FieldDef
 	for _, f := range m.Fields {
-		if f.GraphQLTag == "-" {
+		if tagHas(f.GraphQLTag, "-") {
 			continue
 		}
-		if f.GraphQLTag == "filterable" {
+		if tagHas(f.GraphQLTag, "filterable") {
 			result = append(result, f)
 			continue
 		}
