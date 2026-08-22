@@ -90,6 +90,15 @@ func AuthorizeField(catalog Policy, ep *EndpointPolicy, resolve RoleResolver) gr
 			return nil, fmt.Errorf("authz: no policy entry for field %q — add it to auth.yml or list it under public:", field)
 		}
 
+		// A field that requires NO scopes needs no effective role either —
+		// its resolver owns authorization. Skip role resolution entirely:
+		// otherwise a workspaceId-carrying arg would hard-reject callers who
+		// are authorized by a DIFFERENT axis (e.g. channel operators on
+		// scope-[] channel fields), before their resolver ever runs.
+		if len(scopes) == 0 {
+			return next(ctx)
+		}
+
 		role := ""
 		if resolve != nil {
 			r, err := resolve(ctx, fc.Args)
