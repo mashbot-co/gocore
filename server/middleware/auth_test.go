@@ -6,8 +6,14 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 )
+
+// testClaims is the claims factory the OptionalAuth tests hand the
+// middleware — it is only invoked on the Bearer branch, where verification
+// then fails (no key initialized) and the request proceeds anonymously.
+func testClaims() jwt.Claims { return &jwt.RegisteredClaims{} }
 
 func TestAuth_RejectsInReleaseMode(t *testing.T) {
 	t.Setenv("GIN_MODE", "release")
@@ -74,7 +80,7 @@ func TestAuth_IgnoresInvalidStubHeader(t *testing.T) {
 
 func TestOptionalAuth_NoHeadersStillCallsNext(t *testing.T) {
 	r := gin.New()
-	r.Use(OptionalAuth())
+	r.Use(OptionalAuth(testClaims, nil))
 	called := false
 	r.GET("/x", func(c *gin.Context) {
 		called = true
@@ -96,7 +102,7 @@ func TestOptionalAuth_PicksUpStubUser(t *testing.T) {
 	wantUser := uuid.New()
 
 	r := gin.New()
-	r.Use(OptionalAuth())
+	r.Use(OptionalAuth(testClaims, nil))
 	var seenUser uuid.UUID
 	r.GET("/x", func(c *gin.Context) {
 		if v, ok := c.Get("user_id"); ok {
@@ -118,7 +124,7 @@ func TestOptionalAuth_BearerHeaderIsTolerated(t *testing.T) {
 	// Real verification isn't wired yet — middleware should ignore the bearer
 	// rather than panicking or rejecting.
 	r := gin.New()
-	r.Use(OptionalAuth())
+	r.Use(OptionalAuth(testClaims, nil))
 	r.GET("/x", func(c *gin.Context) { c.Status(200) })
 
 	req := httptest.NewRequest(http.MethodGet, "/x", nil)
