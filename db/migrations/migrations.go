@@ -5,6 +5,7 @@ import (
 	"log"
 	"regexp"
 	"sort"
+	"time"
 
 	"github.com/go-gormigrate/gormigrate/v2"
 	"gorm.io/gorm"
@@ -57,23 +58,121 @@ func All() []*gormigrate.Migration {
 	return sorted
 }
 
-func newMigrate(db *gorm.DB) *gormigrate.Gormigrate {
-	return gormigrate.New(db, &gormigrate.Options{
+// options are shared by every runner so the table name and transaction
+// behaviour cannot drift between Up and the rollback paths.
+func options() *gormigrate.Options {
+	return &gormigrate.Options{
 		TableName:                 "schema_migrations",
 		IDColumnName:              "id",
 		IDColumnSize:              190,
 		UseTransaction:            true,
 		ValidateUnknownMigrations: true,
-	}, All())
+	}
 }
 
-// Up runs all pending migrations.
+func newMigrate(db *gorm.DB) *gormigrate.Gormigrate {
+	return gormigrate.New(db, options(), All())
+}
+
+// Pending returns the registered migrations that have not been applied yet,
+// in the order they will run.
+//
+// Read from schema_migrations rather than inferred: a migration can be
+// applied out of band, and the deploy needs to report what it is ABOUT to do
+// rather than what it assumes is left.
+func Pending(db *gorm.DB) ([]*gormigrate.Migration, error) {
+	all := All()
+	if !db.Migrator().HasTable("schema_migrations") {
+		return all, nil
+	}
+
+	var ids []string
+	if err := db.Raw("SELECT id FROM schema_migrations").Scan(&ids).Error; err != nil {
+		return nil, fmt.Errorf("reading schema_migrations: %w", err)
+	}
+	applied := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		applied[id] = true
+	}
+
+	pending := make([]*gormigrate.Migration, 0, len(all))
+	for _, m := range all {
+		if !applied[m.ID] {
+			pending = append(pending, m)
+		}
+	}
+	return pending, nil
+}
+
+// instrumented returns COPIES of the migrations whose Migrate functions log
+// when they start, when they finish, and how long they took.
+//
+// Copies, because All() hands out pointers into the registry and tests reuse
+// them -- mutating those would make a migration log twice on a second run in
+// the same process, and would leave the registry permanently wrapped.
+//
+// Wrapping rather than driving each migration with MigrateTo: gormigrate
+// decides transaction boundaries and ordering, and stepping it manually to
+// get timing would replace behaviour that works with behaviour that merely
+// looks the same.
+func instrumented(all []*gormigrate.Migration, order map[string]int, total int) []*gormigrate.Migration {
+	out := make([]*gormigrate.Migration, 0, len(all))
+	for _, m := range all {
+		m := m
+		n, isPending := order[m.ID]
+		if !isPending {
+			out = append(out, m)
+			continue
+		}
+		migrate := m.Migrate
+		wrapped := *m
+		wrapped.Migrate = func(tx *gorm.DB) error {
+			log.Printf("migrate: [%d/%d] %s starting", n, total, m.ID)
+			start := time.Now()
+			if err := migrate(tx); err != nil {
+				log.Printf("migrate: [%d/%d] %s FAILED after %s: %v",
+					n, total, m.ID, time.Since(start).Round(time.Millisecond), err)
+				return err
+			}
+			log.Printf("migrate: [%d/%d] %s done in %s",
+				n, total, m.ID, time.Since(start).Round(time.Millisecond))
+			return nil
+		}
+		out = append(out, &wrapped)
+	}
+	return out
+}
+
+// Up runs all pending migrations, reporting how many there are before it
+// starts and timing each one.
+//
+// The count comes first because that is the number an operator needs while
+// deciding whether to wait: a deploy blocks on this, and "17 to apply" and
+// "1 to apply" are very different waits. Per-migration timing then shows
+// WHICH one is slow, rather than leaving a single long silence to interpret.
 func Up(db *gorm.DB) error {
-	m := newMigrate(db)
+	pending, err := Pending(db)
+	if err != nil {
+		return fmt.Errorf("migrate up: %w", err)
+	}
+	if len(pending) == 0 {
+		log.Println("migrate: no pending migrations")
+		return nil
+	}
+
+	order := make(map[string]int, len(pending))
+	for i, m := range pending {
+		order[m.ID] = i + 1
+	}
+	log.Printf("migrate: %d pending migration(s) to apply", len(pending))
+
+	m := gormigrate.New(db, options(), instrumented(All(), order, len(pending)))
+	start := time.Now()
 	if err := m.Migrate(); err != nil {
 		return fmt.Errorf("migrate up: %w", err)
 	}
-	log.Println("migrate: all migrations applied")
+	log.Printf("migrate: applied %d migration(s) in %s",
+		len(pending), time.Since(start).Round(time.Millisecond))
 	return nil
 }
 

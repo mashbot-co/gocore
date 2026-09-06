@@ -1,6 +1,10 @@
 package migrations
 
 import (
+	"bytes"
+	"errors"
+	"fmt"
+	"log"
 	"testing"
 
 	"github.com/go-gormigrate/gormigrate/v2"
@@ -323,5 +327,145 @@ func TestRegisterModel_CreatesAndDropsTable(t *testing.T) {
 	}
 	if db.Migrator().HasTable(&testWidget{}) {
 		t.Fatal("expected table dropped after Down")
+	}
+}
+
+// --- Pending / Up logging ---
+
+// captureLog redirects the standard logger for the duration of a test, so the
+// assertions are about what an operator actually sees during a deploy.
+func captureLog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	prevOut, prevFlags := log.Writer(), log.Flags()
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+	t.Cleanup(func() { log.SetOutput(prevOut); log.SetFlags(prevFlags) })
+	return &buf
+}
+
+func TestPending_ReturnsEverythingWhenNothingApplied(t *testing.T) {
+	defer resetRegistry()()
+	Register(&gormigrate.Migration{ID: "20260101000001",
+		Migrate: func(tx *gorm.DB) error { return nil }, Rollback: func(tx *gorm.DB) error { return nil }})
+	Register(&gormigrate.Migration{ID: "20260101000002",
+		Migrate: func(tx *gorm.DB) error { return nil }, Rollback: func(tx *gorm.DB) error { return nil }})
+
+	pending, err := Pending(openSQLite(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 2 {
+		t.Fatalf("Pending() = %d migrations, want 2", len(pending))
+	}
+}
+
+// The point of reading schema_migrations rather than inferring: a migration
+// applied out of band must not be reported as still pending.
+func TestPending_ExcludesAlreadyApplied(t *testing.T) {
+	defer resetRegistry()()
+	Register(&gormigrate.Migration{ID: "20260101000001",
+		Migrate: func(tx *gorm.DB) error { return nil }, Rollback: func(tx *gorm.DB) error { return nil }})
+	Register(&gormigrate.Migration{ID: "20260101000002",
+		Migrate: func(tx *gorm.DB) error { return nil }, Rollback: func(tx *gorm.DB) error { return nil }})
+
+	db := openSQLite(t)
+	if err := Up(db); err != nil {
+		t.Fatalf("first Up: %v", err)
+	}
+
+	pending, err := Pending(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 0 {
+		t.Errorf("Pending() after Up = %d, want 0", len(pending))
+	}
+}
+
+func TestUp_LogsCountThenEachMigrationWithTiming(t *testing.T) {
+	defer resetRegistry()()
+	for _, id := range []string{"20260101000001", "20260101000002", "20260101000003"} {
+		Register(&gormigrate.Migration{ID: id,
+			Migrate: func(tx *gorm.DB) error { return nil }, Rollback: func(tx *gorm.DB) error { return nil }})
+	}
+
+	out := captureLog(t)
+	if err := Up(openSQLite(t)); err != nil {
+		t.Fatalf("Up: %v", err)
+	}
+	got := out.String()
+
+	for _, want := range []string{
+		"3 pending migration(s) to apply",
+		"[1/3] 20260101000001 starting",
+		"[1/3] 20260101000001 done in",
+		"[2/3] 20260101000002 starting",
+		"[3/3] 20260101000003 done in",
+		"applied 3 migration(s) in",
+	} {
+		if !contains(got, want) {
+			t.Errorf("log missing %q\ngot:\n%s", want, got)
+		}
+	}
+}
+
+// A second run must say so plainly rather than logging a count of zero and a
+// duration, which reads like work happened.
+func TestUp_SaysNothingToDoWhenAlreadyCurrent(t *testing.T) {
+	defer resetRegistry()()
+	Register(&gormigrate.Migration{ID: "20260101000001",
+		Migrate: func(tx *gorm.DB) error { return nil }, Rollback: func(tx *gorm.DB) error { return nil }})
+
+	db := openSQLite(t)
+	if err := Up(db); err != nil {
+		t.Fatalf("first Up: %v", err)
+	}
+
+	out := captureLog(t)
+	if err := Up(db); err != nil {
+		t.Fatalf("second Up: %v", err)
+	}
+	got := out.String()
+	if !contains(got, "no pending migrations") {
+		t.Errorf("want 'no pending migrations', got:\n%s", got)
+	}
+	if contains(got, "starting") {
+		t.Errorf("second run logged a migration starting:\n%s", got)
+	}
+}
+
+// A failure has to name WHICH migration failed and how long it ran; a bare
+// wrapped error leaves an operator diffing the registry against the table.
+func TestUp_LogsWhichMigrationFailed(t *testing.T) {
+	defer resetRegistry()()
+	Register(&gormigrate.Migration{ID: "20260101000001",
+		Migrate: func(tx *gorm.DB) error { return nil }, Rollback: func(tx *gorm.DB) error { return nil }})
+	Register(&gormigrate.Migration{ID: "20260101000002",
+		Migrate: func(tx *gorm.DB) error { return errors.New("boom") }, Rollback: func(tx *gorm.DB) error { return nil }})
+
+	out := captureLog(t)
+	if err := Up(openSQLite(t)); err == nil {
+		t.Fatal("expected Up to fail")
+	}
+	got := out.String()
+	if !contains(got, "[2/2] 20260101000002 FAILED after") {
+		t.Errorf("log should name the failing migration, got:\n%s", got)
+	}
+}
+
+// The registry hands out pointers; wrapping must not mutate them, or a second
+// Up in the same process would log through two layers of wrapper.
+func TestUp_DoesNotMutateTheRegistry(t *testing.T) {
+	defer resetRegistry()()
+	Register(&gormigrate.Migration{ID: "20260101000001",
+		Migrate: func(tx *gorm.DB) error { return nil }, Rollback: func(tx *gorm.DB) error { return nil }})
+
+	before := All()[0].Migrate
+	if err := Up(openSQLite(t)); err != nil {
+		t.Fatalf("Up: %v", err)
+	}
+	if fmt.Sprintf("%p", All()[0].Migrate) != fmt.Sprintf("%p", before) {
+		t.Error("Up replaced the registered migration's Migrate function")
 	}
 }
